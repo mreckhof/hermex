@@ -194,7 +194,7 @@ struct OnboardingView: View {
             Task { await viewModel.connect(authManager: authManager, browser: .init(webAuthenticationSession)) }
         } label: {
             Group {
-                if viewModel.signInMethod == .browser {
+                if viewModel.signInMethod.usesBrowser {
                     Label("Sign In with Browser", systemImage: "safari")
                 } else {
                     Label("Connect", systemImage: "checkmark.circle.fill")

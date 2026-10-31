@@ -508,3 +508,14 @@ Capture bugs, polish notes, and follow-up ideas in [GitHub Issues](https://githu
 - Launch screen acceptable.
 - Privacy permission prompts readable.
 - TestFlight install path documented.
+
+### Nous Portal through a reverse proxy
+
+Enter the public Hermes dashboard URL, including its proxy prefix when it has one
+(for example `https://example.com/hermes`). The proxy must forward both `api/`
+and `auth/` routes beneath that prefix and support WebSocket upgrades. When public
+status advertises `native_pkce` and the `nous` provider, setup, Add Server and the
+server's sign-in form offer Nous Portal. A host offering basic authentication also
+keeps Username and Password as a choice. The system's private browser sheet completes
+the gateway-brokered PKCE exchange; credentials and rotated refresh tokens remain
+scoped to that saved server in Keychain.

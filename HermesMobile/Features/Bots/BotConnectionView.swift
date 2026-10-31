@@ -54,8 +54,18 @@ import Observation
                         .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                         .accessibilityIdentifier("hermes-connection-address")
                 }
+                if setup.offersNousSignIn {
+                    Picker("Sign-in method", selection: $setup.selectedSignInMethod) {
+                        if setup.defaultSignInMethod == .password {
+                            Text("Username and Password").tag(HermesSignInMethod.password)
+                        }
+                        Text("Sign In with Browser").tag(HermesSignInMethod.browser)
+                        Text("Nous Portal").tag(HermesSignInMethod.nous)
+                    }
+                    .disabled(setup.isConnecting)
+                }
                 switch setup.signInMethod {
-                case .browser:
+                case .browser, .nous:
                     Text("This server signs in through your browser.").foregroundStyle(.secondary)
                 case .open:
                     OpenDashboardWarning()
@@ -172,7 +182,7 @@ import Observation
 
     private var connectTitle: String {
         if setup.isConnecting { return String(localized: "Connecting…") }
-        return setup.signInMethod == .browser ? String(localized: "Sign In with Browser") : String(localized: "Connect")
+        return setup.signInMethod.usesBrowser ? String(localized: "Sign In with Browser") : String(localized: "Connect")
     }
 
     private var browser: HermesBrowserSignIn.Presenter { HermesBrowserSignIn.Presenter(webAuthenticationSession) }
@@ -409,7 +419,18 @@ extension BotHostStatus {
     /// How this Hermes server signs in: as its host's status says, or, until the status answers,
     /// as its saved sign-in did, through the browser (#708) or without credentials (#1314). Only a
     /// Hermes server's own sign-in; a webui server's Bots connection keeps the password form.
+    var selectedSignInMethod: HermesSignInMethod = .password
+    var offersNousSignIn: Bool {
+        guard isServerSignIn, case .reachable(let status) = hostStatus else { return false }
+        return status.offersNousSignIn
+    }
+    var defaultSignInMethod: HermesSignInMethod {
+        if case .reachable(let status) = hostStatus { return status.signInMethod }
+        return .password
+    }
     var signInMethod: HermesSignInMethod {
+        if offersNousSignIn { return selectedSignInMethod }
+
         guard isServerSignIn else { return .password }
         if case .reachable(let status) = hostStatus { return status.signInMethod }
         if saved?.oauth != nil { return .browser }
@@ -419,7 +440,7 @@ extension BotHostStatus {
     /// Why the edited headers can't be sent to Hermes (`HermesHeaders`), shown under the
     /// Connection Headers row; Connect stays off until it is fixed. Nil when they can.
     var headerRejection: String? {
-        do { _ = try HermesHeaders(headers.sanitizedForStorage(), signsInWithBrowser: signInMethod == .browser); return nil }
+        do { _ = try HermesHeaders(headers.sanitizedForStorage(), signsInWithBrowser: signInMethod.usesBrowser); return nil }
         catch { return error.localizedDescription }
     }
 
@@ -479,7 +500,10 @@ extension BotHostStatus {
         guard statusCheck == id, !Task.isCancelled, statusAddress == checked else { return }
         statusCheck = nil
         switch result {
-        case .success(let status): hostStatus = .reachable(status)
+        case .success(let status):
+            hostStatus = .reachable(status)
+            selectedSignInMethod = saved?.oauth?.provider == "nous" && status.offersNousSignIn
+                ? .nous : status.signInMethod
         case .failure(let failure): hostStatus = .unreachable(failure)
         }
     }
@@ -494,7 +518,7 @@ extension BotHostStatus {
     /// and one without sign-in saves no username or password.
     func connect(replacingHost: Bool = false, browser: HermesBrowserSignIn.Presenter = .unavailable) async -> Bool {
         guard !isConnecting, !Task.isCancelled else { return false }
-        if signInMethod == .browser { return await connectThroughBrowser(browser, replacingHost: replacingHost) }
+        if signInMethod.usesBrowser { return await connectThroughBrowser(browser, replacingHost: replacingHost) }
         let isOpen = signInMethod == .open
         let id = UUID(); attempt = id; isConnecting = true; errorMessage = nil; differentHostAddress = nil
         defer { if attempt == id { isConnecting = false; client = nil; attempt = nil } }
@@ -548,7 +572,7 @@ extension BotHostStatus {
             let http = HermesConnection(connection: BotConnection(
                 id: UUID(), name: label, address: server, username: "", password: "",
                 installID: expected, headers: admitted.isEmpty ? nil : admitted), configuration: hermesConfiguration())
-            try await HermesBrowserSignIn.signIn(http, presenter: browser)
+            try await HermesBrowserSignIn.signIn(http, presenter: browser, provider: signInMethod == .nous ? "nous" : nil)
             guard attempt == id, !Task.isCancelled else { return false }
             let signedIn = http.connection
             let sameInstall = http.serverInstallID != nil && http.serverInstallID == saved?.installID

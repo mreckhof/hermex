@@ -159,24 +159,34 @@ final class BotConnectionVersionTests: XCTestCase {
                 XCTAssertEqual($0 as? BotAddressError, .invalid, invalid)
             }
         }
-        let refusedPaths = ["host/path": "/path", "https://hermes.example.com/hermes": "/hermes",
-                            "https://hermes.example.com/hermes/sessions/": "/hermes/sessions"]
-        for (input, path) in refusedPaths {
-            XCTAssertThrowsError(try BotConnection.address(input), input) {
-                XCTAssertEqual($0 as? BotAddressError, .path(path), input)
-            }
-        }
+        XCTAssertEqual(try BotConnection.address("https://proxy.example/hermes/").absoluteString,
+                       "https://proxy.example/hermes")
+    }
+
+    func testMixedProviderReauthenticationCanSelectNous() async {
+        let status = BotHostStatus(.object(["auth_required": .bool(true),
+            "auth_providers": .array([.string("basic"), .string("nous")]),
+            "auth_flows": .array([.string("native_pkce")])]))
+        let model = BotConnectionSetup(server: server, isServerSignIn: true,
+            store: BotConnectionStore(keychain: InMemoryKeychainStore()),
+            probe: { _, _ in .success(status) })
+        model.load()
+        await model.checkStatus()
+        XCTAssertTrue(model.offersNousSignIn)
+        XCTAssertEqual(model.signInMethod, .password)
+        XCTAssertFalse(model.canConnect)
+        model.selectedSignInMethod = .nous
+        XCTAssertEqual(model.signInMethod, .nous)
+        XCTAssertTrue(model.canConnect)
     }
 
     func testAddressFailureIsVisibleBeforeAClientExists() async {
         let model = BotConnectionSetup(server: server, store: BotConnectionStore(keychain: InMemoryKeychainStore()),
             makeWire: { _ in XCTFail("Invalid input must not create a client"); return ConnectionSetupWire() }, discard: { _ in })
-        model.address = "host/not-supported"
+        model.address = "ftp://host"
         let succeeded = await model.connect()
         XCTAssertFalse(succeeded)
-        XCTAssertEqual(model.errorMessage, BotAddressError.path("/not-supported").localizedDescription)
-        XCTAssertTrue(model.errorMessage?.contains("“\u{2068}/not-supported\u{2069}”") == true,
-                      "The error names the refused path, isolated so its slash stays in front in right-to-left text")
+        XCTAssertEqual(model.errorMessage, BotAddressError.invalid.localizedDescription)
         XCTAssertFalse(model.isConnecting)
     }
 
@@ -267,7 +277,7 @@ final class BotConnectionVersionTests: XCTestCase {
             } })
         model.load()
         await model.checkStatus()
-        XCTAssertEqual(model.signInMethod, .browser)
+        XCTAssertEqual(model.signInMethod, .nous)
         XCTAssertTrue(model.canConnect, "No username or password to fill in")
 
         let presenter = HermesBrowserSignIn.Presenter { url in _ = try await HermesBrowserSignInTests.callback(url, code: "code-1") }

@@ -124,6 +124,17 @@ struct AddServerView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
 
+        if form.offersNousSignIn {
+            Picker("Sign-in method", selection: $form.signInMethod) {
+                if form.defaultSignInMethod == .password {
+                    Text("Username and Password").tag(HermesSignInMethod.password)
+                }
+                Text("Sign In with Browser").tag(HermesSignInMethod.browser)
+                Text("Nous Portal").tag(HermesSignInMethod.nous)
+            }
+            .disabled(form.isConnectionLocked)
+        }
+
         if form.showsHermesCredentials {
             savedSignInRows
 
@@ -228,7 +239,7 @@ struct AddServerView: View {
             switch form.signInMethod {
             case .password:
                 SettingsFootnote(String(localized: "Hermes dashboard found. Sign in with your dashboard username and password."))
-            case .browser:
+            case .browser, .nous:
                 SettingsFootnote(String(localized: "Hermes dashboard found. It signs in through your browser."))
             case .open:
                 Label(HermesSignInMethod.openWarning, systemImage: "exclamationmark.triangle.fill")

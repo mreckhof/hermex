@@ -84,6 +84,17 @@ struct OnboardingConnectPage: View {
 
                     statusMessages
 
+                    if viewModel.offersNousSignIn {
+                        Picker("Sign-in method", selection: $viewModel.signInMethod) {
+                            if viewModel.defaultSignInMethod == .password {
+                                Text("Username and Password").tag(HermesSignInMethod.password)
+                            }
+                            Text("Sign In with Browser").tag(HermesSignInMethod.browser)
+                            Text("Nous Portal").tag(HermesSignInMethod.nous)
+                        }
+                        .disabled(viewModel.isConnectionLocked)
+                    }
+
                     if viewModel.showsHermesCredentials {
                         savedSignInRows
 
@@ -176,7 +187,7 @@ struct OnboardingConnectPage: View {
                                    tint: .orange)
         } else if viewModel.showsHermesSignIn {
             OnboardingStatusBanner(
-                text: viewModel.signInMethod == .browser
+                text: viewModel.signInMethod.usesBrowser
                     ? String(localized: "Hermes dashboard found. It signs in through your browser.")
                     : String(localized: "Hermes dashboard found. Sign in with your dashboard username and password."),
                 systemImage: "checkmark.circle.fill",

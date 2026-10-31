@@ -107,7 +107,9 @@ final class OnboardingViewModel {
     /// How the detected dashboard signs in: a password, the browser (#708), whose page
     /// Connect shows, or none (#1314), which Connect signs in to as it is. Only the first asks
     /// for a username and password.
-    private(set) var signInMethod: HermesSignInMethod = .password
+    var signInMethod: HermesSignInMethod = .password
+    private(set) var offersNousSignIn = false
+    private(set) var defaultSignInMethod: HermesSignInMethod = .password
     /// `useMoveSourceHeaders` filled the move source's headers in, so the offer is gone.
     private(set) var usedMoveSourceHeaders = false
     var connectionMessage: String?
@@ -256,6 +258,10 @@ final class OnboardingViewModel {
         } catch {
             urlPart = serverURLString.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         }
+        // Preserve proxy prefixes (including case) while discovery is in flight too.
+        if detectedKind != .webui, let dashboard = try? BotConnection.address(serverURLString) {
+            urlPart = dashboard.absoluteString
+        }
         // A found dashboard signs in at the Hermes parser's URL, whose scheme can differ from
         // the webui's for the same text (`mac.local:9119` is http there and https here), so
         // while one is held that URL is part of the identity too (#900).
@@ -307,6 +313,8 @@ final class OnboardingViewModel {
         offersWebuiReplace = false
         detectedKind = nil
         signInMethod = .password
+        offersNousSignIn = false
+        defaultSignInMethod = .password
         savedSignIns = []
         probedConnectionIdentity = nil
     }
@@ -366,7 +374,7 @@ final class OnboardingViewModel {
     // MARK: - Server kind (#900)
 
     private enum Detection {
-        case hermes(URL, HermesSignInMethod)
+        case hermes(URL, BotHostStatus)
         case notHermes
         /// A Host-header 400 or an access proxy's own sign-in, with its advice.
         case refused(String)
@@ -384,8 +392,8 @@ final class OnboardingViewModel {
                                   headers: headers.values.isEmpty ? nil : headers.values)
         do {
             let status = try await HermesConnection(connection: probe, configuration: hermesConfiguration()).status()
-            guard let method = HermesSignInMethod(status) else { return .notHermes }
-            return .hermes(address, method)
+            guard HermesSignInMethod(status) != nil else { return .notHermes }
+            return .hermes(address, BotHostStatus(status))
         } catch let failure as BotFailure where failure == .blocked || failure == .rejected(400) {
             return .refused(BotConnectionAdvice.message(for: failure, address: address))
         } catch {
@@ -394,10 +402,12 @@ final class OnboardingViewModel {
     }
 
     /// Callers have just checked that the inputs are the ones probed.
-    private func foundHermes(at address: URL, signInMethod: HermesSignInMethod, authManager: AuthManager) {
+    private func foundHermes(at address: URL, status: BotHostStatus, authManager: AuthManager) {
         authStatus = nil
         detectedKind = .hermes
-        self.signInMethod = signInMethod
+        self.signInMethod = status.signInMethod
+        defaultSignInMethod = status.signInMethod
+        offersNousSignIn = status.offersNousSignIn
         probedConnectionIdentity = currentConnectionIdentity()
         savedSignIns = signInMethod == .password ? authManager.savedHermesSignIns(at: address) : []
     }
@@ -433,7 +443,7 @@ final class OnboardingViewModel {
         guard token == operationGeneration, identityAtStart == currentConnectionIdentity() else { return }
         switch detection {
         case .hermes(let address, let method):
-            foundHermes(at: address, signInMethod: method, authManager: authManager)
+            foundHermes(at: address, status: method, authManager: authManager)
             return
         case .refused(let advice):
             forgetProbe()
@@ -517,7 +527,7 @@ final class OnboardingViewModel {
             guard token == operationGeneration, identityAtStart == currentConnectionIdentity() else { return nil }
             switch detection {
             case .hermes(let address, let method):
-                foundHermes(at: address, signInMethod: method, authManager: authManager)
+                foundHermes(at: address, status: method, authManager: authManager)
                 return nil
             case .refused(let advice):
                 forgetProbe()
@@ -562,7 +572,7 @@ final class OnboardingViewModel {
         let headers: [CustomHeader]
         do {
             address = try BotConnection.address(serverURLString)
-            headers = try HermesHeaders(sentHeaders, signsInWithBrowser: signInMethod == .browser).values
+            headers = try HermesHeaders(sentHeaders, signsInWithBrowser: signInMethod.usesBrowser).values
         } catch {
             errorMessage = error.localizedDescription
             return nil
@@ -583,8 +593,8 @@ final class OnboardingViewModel {
         )
         let http = HermesConnection(connection: candidate, configuration: hermesConfiguration())
         do {
-            if signInMethod == .browser {
-                try await HermesBrowserSignIn.signIn(http, presenter: browser)
+            if signInMethod.usesBrowser {
+                try await HermesBrowserSignIn.signIn(http, presenter: browser, provider: signInMethod == .nous ? "nous" : nil)
             } else {
                 try await http.signIn()
             }

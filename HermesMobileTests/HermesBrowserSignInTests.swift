@@ -27,6 +27,28 @@ import XCTest
             + "&code_challenge_method=S256&redirect_uri=http%3A%2F%2F127.0.0.1%3A5000%2Fcallback&state=s%2Bt")
     }
 
+    func testNousAuthorizationAndTransportKeepTheProxyPrefix() throws {
+        let base = try BotConnection.address("https://proxy.example/hermes/")
+        let url = try HermesBrowserSignIn.authorizeURL(base: base, challenge: "challenge",
+            redirect: "http://127.0.0.1:5000/callback", state: "state", provider: "nous")
+        XCTAssertEqual(url.path, "/hermes/auth/native/authorize")
+        XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name == "provider" })?.value, "nous")
+        XCTAssertEqual(try HermesREST.gatewayUpgrade(base: base, pass: .ticket("test")).url?.absoluteString,
+                       "wss://proxy.example/hermes/api/ws")
+        XCTAssertEqual(try HermesREST.status.request(base: base).url?.path, "/hermes/api/status")
+        XCTAssertEqual(try HermesREST.nativeToken(code: "code", verifier: "verifier").request(base: base).url?.path,
+                       "/hermes/auth/native/token")
+    }
+
+    func testMixedProviderHostOffersNousWithoutRemovingPassword() {
+        let status = BotHostStatus(.object(["auth_required": .bool(true),
+            "auth_providers": .array([.string("basic"), .string("nous")]),
+            "auth_flows": .array([.string("native_pkce")])]))
+        XCTAssertTrue(status.offersNousSignIn)
+        XCTAssertEqual(status.signInMethod, .password)
+    }
+
     /// Browser sign-in when the host offers it and no password provider, or when the testing
     /// toggle asks for it on a host that offers it; never on a host without it.
     func testOnlyAHostOfferingBrowserSignInWithoutAPasswordRequiresIt() {

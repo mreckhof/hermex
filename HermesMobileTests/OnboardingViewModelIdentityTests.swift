@@ -23,8 +23,18 @@ final class OnboardingViewModelIdentityTests: XCTestCase {
         viewModel.serverURLString = "https://example.com/"
         XCTAssertEqual(viewModel.probeConnectionIdentityForTesting(), before, "trailing slash must not churn")
 
-        viewModel.serverURLString = "  https://EXAMPLE.com/path?query=1#frag  "
-        XCTAssertEqual(viewModel.probeConnectionIdentityForTesting(), before, "case/whitespace/path/query/fragment are normalized away")
+        viewModel.serverURLString = "  https://EXAMPLE.com/?query=1#frag  "
+        XCTAssertEqual(viewModel.probeConnectionIdentityForTesting(), before, "host case/whitespace/query/fragment are normalized away")
+    }
+
+    func testProxyPrefixesHaveDistinctDiscoveryIdentities() {
+        let form = OnboardingViewModel()
+        form.serverURLString = "https://proxy.example/first"
+        let first = form.probeConnectionIdentityForTesting()
+        form.serverURLString = "https://proxy.example/second"
+        XCTAssertNotEqual(form.probeConnectionIdentityForTesting(), first)
+        form.serverURLString = "https://proxy.example/First"
+        XCTAssertNotEqual(form.probeConnectionIdentityForTesting(), first, "Proxy paths can be case sensitive")
     }
 
     func testHeaderNameCaseAndOrderDoNotChangeIdentity() {
@@ -462,6 +472,53 @@ final class OnboardingViewModelIdentityTests: XCTestCase {
         let added = await form.connect(authManager: manager, browser: presenter)
 
         let server = URL(string: "https://hermes.example")!
+        XCTAssertEqual(added, server)
+        XCTAssertEqual(manager.state, .loggedIn(server: server))
+        let saved = try XCTUnwrap(BotConnectionStore(keychain: keychain).load(server: server))
+        XCTAssertEqual(saved.oauth, HermesOAuth(provider: "nous", userID: "u1", refreshToken: "refresh-1"))
+        XCTAssertEqual(saved.hermesVersion, "0.21.5")
+    }
+
+    func testMixedProviderProxyCanSelectNousAndSaveItsOwnCredentials() async throws {
+        let keychain = InMemoryKeychainStore()
+        let gatekeeper = OnboardingGateKeeper()
+        gatekeeper.drainEverything()
+        let manager = makeGatedManager(GatedAuthAPIClient(gatekeeper: gatekeeper, outcome: .succeed(
+            AuthStatusResponse(authEnabled: true, loggedIn: false))), keychain: keychain)
+        let form = makeHermesForm { request in
+            switch request.url?.path {
+            case "/hermes/api/status":
+                var status = HermesBrowserSignInTests.browserStatus
+                if case .object(var values) = status {
+                    values["auth_providers"] = .array([.string("basic"), .string("nous")])
+                    status = .object(values)
+                }
+                return .json(200, status)
+            case "/hermes/auth/native/token": return .json(200, HermesBrowserSignInTests.tokens)
+            case "/hermes/api/auth/me": return .json(200, .object(["provider": .string("nous"), "user_id": .string("u1")]))
+            default: return nil
+            }
+        }
+        form.serverURLString = "https://proxy.example/hermes/"
+
+        await form.connect(authManager: manager)
+        XCTAssertTrue(form.showsHermesSignIn)
+        XCTAssertEqual(form.signInMethod, .password)
+        XCTAssertTrue(form.offersNousSignIn)
+        form.signInMethod = .nous
+        XCTAssertFalse(form.showsHermesCredentials)
+        XCTAssertFalse(form.showsPasswordField)
+        XCTAssertTrue(form.canSubmit, "No username or password to fill in")
+
+        let presenter = HermesBrowserSignIn.Presenter { url in
+            XCTAssertEqual(url.path, "/hermes/auth/native/authorize")
+            XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+                .first(where: { $0.name == "provider" })?.value, "nous")
+            _ = try await HermesBrowserSignInTests.callback(url, code: "code-1")
+        }
+        let added = await form.connect(authManager: manager, browser: presenter)
+
+        let server = URL(string: "https://proxy.example/hermes")!
         XCTAssertEqual(added, server)
         XCTAssertEqual(manager.state, .loggedIn(server: server))
         let saved = try XCTUnwrap(BotConnectionStore(keychain: keychain).load(server: server))

@@ -61,14 +61,14 @@ import SwiftUI
     /// in as a browser sign-in's connection (`http.connection`), which the caller saves.
     /// Closing the sheet throws `CancellationError`; a sheet that closed without a matching
     /// callback, or a code the host no longer accepts, throws `.browserSignInFailed`.
-    static func signIn(_ http: HermesConnection, presenter: Presenter) async throws {
+    static func signIn(_ http: HermesConnection, presenter: Presenter, provider: String? = nil) async throws {
         let verifier = randomURLSafe(32), state = randomURLSafe(16)
         let listener = HermesLoopbackListener(bounce: "\(callbackScheme)://done", state: state)
         defer { listener.stop() }
         let port: NWEndpoint.Port
         do { port = try await listener.start() } catch { throw BotFailure.browserSignInFailed }
         let url = try authorizeURL(base: http.connection.address, challenge: challenge(for: verifier),
-                                   redirect: "http://127.0.0.1:\(port.rawValue)/callback", state: state)
+                                   redirect: "http://127.0.0.1:\(port.rawValue)/callback", state: state, provider: provider)
         do {
             try await presenter.present(url)
         } catch where listener.code == nil {
@@ -84,10 +84,9 @@ import SwiftUI
     }
 
     /// `/auth/native/authorize` on `base` with every query value fully percent-encoded,
-    /// since some proxies' filters refuse an unencoded `redirect_uri=http://…`. No
-    /// `provider`: the host picks its only interactive provider itself and shows its own
-    /// chooser when it has several.
-    static func authorizeURL(base: URL, challenge: String, redirect: String, state: String) throws -> URL {
+    /// since some proxies' filters refuse an unencoded `redirect_uri=http://…`.
+    /// An explicit provider selects Nous; otherwise the host chooses its provider.
+    static func authorizeURL(base: URL, challenge: String, redirect: String, state: String, provider: String? = nil) throws -> URL {
         guard var parts = URLComponents(url: base.appendingPathComponent("auth/native/authorize"),
                                         resolvingAgainstBaseURL: false) else { throw BotFailure.invalidAddress }
         parts.percentEncodedQueryItems = [
@@ -96,6 +95,9 @@ import SwiftUI
             URLQueryItem(name: "redirect_uri", value: encoded(redirect)),
             URLQueryItem(name: "state", value: encoded(state))
         ]
+        if let provider {
+            parts.percentEncodedQueryItems?.append(URLQueryItem(name: "provider", value: encoded(provider)))
+        }
         guard let url = parts.url else { throw BotFailure.invalidAddress }
         return url
     }

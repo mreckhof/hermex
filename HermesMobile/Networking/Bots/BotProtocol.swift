@@ -332,11 +332,15 @@ extension BotTransport {
 }
 
 /// How a dashboard's `/api/status` says a phone signs in.
-enum HermesSignInMethod: Equatable {
+enum HermesSignInMethod: Hashable {
     /// A username and password.
     case password
     /// The host's browser page (`HermesBrowserSignIn.isRequired(by:)`, #708).
     case browser
+    /// Selects Nous explicitly while retaining the host’s general browser chooser.
+    case nous
+
+    var usesBrowser: Bool { self == .browser || self == .nous }
     /// No sign-in (`auth_required` false, #1314): a dashboard bound to loopback without
     /// `dashboard.public_url`, reached through a proxy. The connection reads the session token
     /// the dashboard's page carries, and anyone who reaches the address can do the same.
@@ -377,6 +381,7 @@ struct BotHostStatus: Equatable {
     var profiles: [String]?
     /// How the host says a phone signs in; a password for a status without `auth_required`.
     var signInMethod: HermesSignInMethod
+    var offersNousSignIn: Bool = false
 
     init(_ json: BotJSON) {
         version = json["version"].text
@@ -392,6 +397,9 @@ struct BotHostStatus: Equatable {
                 .filter { !$0.isEmpty && seen.insert($0).inserted }
         }
         signInMethod = HermesSignInMethod(json) ?? .password
+        offersNousSignIn = json["auth_required"].flag == true
+            && json["auth_flows"].list?.contains(.string("native_pkce")) == true
+            && json["auth_providers"].list?.contains(.string("nous")) == true
     }
 }
 

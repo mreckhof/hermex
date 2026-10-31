@@ -48,13 +48,9 @@ struct BotConnection: Codable, Equatable, Identifiable {
     /// root: the pages the root redirects to, sign-in, and the API and gateway socket.
     private static let dashboardPaths: Set<String> = ["login", "auth", "api", "chat", "sessions"]
 
-    /// Parses the connection form's text into the dashboard root every request is built
-    /// from, so a saved address never has a path, query or fragment. A pasted link is
-    /// reduced to its root: `ws`/`wss` become `http`/`https`, the query and fragment are
-    /// dropped, and a path starting with a `dashboardPaths` segment is cleared. Any other
-    /// path throws `BotAddressError.path`; credentials, other schemes and bad hosts or
-    /// ports throw `.invalid`. A missing scheme becomes HTTPS, or HTTP for private and
-    /// local hosts. The form's preview and dev auto-login parse through here too.
+    /// Parses a dashboard origin and optional reverse-proxy prefix. Query and fragment
+    /// are discarded; recognized root-level dashboard pages are reduced to the origin.
+    /// Other paths are preserved so every request reaches the same proxy deployment.
     static func address(_ text: String) throws -> URL {
         var value = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, !value.contains(where: \.isWhitespace) else { throw BotAddressError.invalid }
@@ -82,13 +78,14 @@ struct BotConnection: Codable, Equatable, Identifiable {
         guard !plainHost.allSatisfy({ $0.isNumber || $0 == "." }) || IPv4Address(plainHost) != nil else {
             throw BotAddressError.invalid
         }
-        if let first = path.split(separator: "/").first, !dashboardPaths.contains(first.lowercased()) {
-            throw BotAddressError.path(path)
+        // Keep reverse-proxy prefixes; continue accepting pasted dashboard page URLs.
+        if let first = path.split(separator: "/").first, dashboardPaths.contains(first.lowercased()) {
+            path = ""
         }
         if !hasScheme && defaultsToHTTP(plainHost.lowercased()) { parts.scheme = "http" }
         parts.scheme = parts.scheme?.lowercased()
         parts.host = host.lowercased()
-        parts.path = ""
+        parts.path = path
         guard let url = parts.url else { throw BotAddressError.invalid }
         return url
     }
